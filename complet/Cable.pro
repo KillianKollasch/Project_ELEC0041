@@ -44,9 +44,12 @@ Group {
   Insolating_PVC = Region[45];
   Ground = Region[50];
 
-  If(defect == 0)
-    Semiconductor += Region[14];
+
+  Semiconductor += Region[14];
+  If(defect == 1)
+    Air = Region[4];
   EndIf
+  
   If (armour == 1)
       SteelPipe += Region[44];
       Insolating_PVC += Region[43];
@@ -65,13 +68,16 @@ Group {
   DomainNC_Mag  = Region[ {Ground, Semiconductor, Ind_1, Ind_2, Ind_3, Insolating_PET, Insolating_PP, Insolating_PVC, Insolating_XLPE} ]; // non-conducting regions
   DomainC_Mag   = Region[ {SteelPipe, Copper} ]; //conducting regions
   Domain_Mag = Region[ {DomainNC_Mag, DomainC_Mag} ];
-
+  
   Domain_tot = Region[{Ground, SteelPipe, Semiconductor, Ind_1, Ind_2, Ind_3, Copper, Insolating_PET, Insolating_PVC, Insolating_XLPE, Insolating_PP}];
-
-    
+  If(defect == 1)
+    Domain_tot += Region[Air];
+    Domain_Ele += Region[Air];
+    Domain_Mag += Region[Air];
+  EndIf
   DomainDummy = Region[1234]; //postpro
 
-  
+  Conductor = Region[{SteelPipe, Copper, Ind_1, Ind_2, Ind_3}];
   Semi = Region[{Semiconductor}];
   Conductor_screen = Region[{Copper}];
   Insolating = Region[{Insolating_PET, Insolating_PVC, Insolating_XLPE, Insolating_PP}];
@@ -102,7 +108,11 @@ Function {
 
   nu[Region[{Ground, Semiconductor, Ind_1, Ind_2, Ind_3, Insolating_PET, Insolating_PP, Insolating_PVC, Insolating_XLPE, Copper}]]  = 1./mu0;
   nu[Region[{SteelPipe}]]  = 1./(mu0*mur_steel);
-
+  If(defect == 1 )
+      sigma[Air] = 1e-6; 
+      epsilon[Air] = eps0; 
+      nu[Air] = 1./mu0;
+  EndIf
 
     DefineConstant[
     Freq = {50, Min 1, Max 10000, Step 1,
@@ -525,8 +535,9 @@ If (Flag_AnalysisType ==2)
     k[Region[{Insolating_PET, Insolating_PP, Insolating_PVC, Insolating_XLPE}]] = 0.46; // note Louis, useless as not conducting
     k[Region[{Ind_1, Ind_2, Ind_3, Copper}]] = 400;
 
-    
-    
+    If(defect == 1)
+      k[Air] = 0.02;
+    EndIf
   }
 
   Constraint {
@@ -567,14 +578,15 @@ If (Flag_AnalysisType ==2)
       Quantity {
         { Name T;  Type Local; NameOfSpace Hgrad_T; }
         { Name a; Type Local; NameOfSpace Hcurl_a_Mag_2D; }
+        { Name ir; Type Local; NameOfSpace Hregion_i_2D; }
         
       }
       Equation {
         Galerkin { [ k[] * Dof{d T} , {d T} ];
                   In Domain_tot; Integration I1; Jacobian Vol;  }
 
-        Galerkin { [ -0.5*sigma[]* <a>[SquNorm[Dt[{a}]]], {T} ];
-                 In Domain_tot; Integration I1; Jacobian Vol;  }
+        Galerkin { [ -0.5*sigma[]* <a>[SquNorm[Dt[{a}]]] - 0.5*<ir>[SquNorm[{ir}*Ns[]/Sc[]]]/sigma[], {T} ];
+                  In Domain_tot; Integration I1; Jacobian Vol;  }
 
       }
     }
@@ -606,6 +618,7 @@ If (Flag_AnalysisType ==2)
       Quantity {
         { Name T; Value{ Local{ [ {T} ] ; In Domain_Mag; Jacobian Vol;} } }
         { Name q; Value{ Local{ [ -k[]*{d T} ] ; In Domain_Mag; Jacobian Vol; } } }
+        { Name sigma; Value{ Local{ [ sigma[{T}] ] ; In Conductor; Jacobian Vol; } } }
         //{ Name q_vol ; Value { Term { [ Complex[0, 1]*Omega*(a*a) ] ; In Domain_tot ; Jacobian Vol; } } }
       }
     }
@@ -615,8 +628,9 @@ If (Flag_AnalysisType ==2)
   PostOperation {
     { Name Post_MagTher ; NameOfPostProcessing The ;
       Operation {
-        Print[ T, OnElementsOf Domain_Mag , File "map_T.pos"];
-        Print[ q, OnElementsOf Domain_Mag , File "map_Q.pos"];
+        Print[ T, OnElementsOf Domain_Mag , File "res/map_T.pos"];
+        Print[ q, OnElementsOf Domain_Mag , File "res/map_Q.pos"];
+        Print[ sigma, OnElementsOf Conductor , File "res/map_Sigma.pos"];
         //Print[ qVol, OnElementsOf Domain_tot , File "map_QVol.pos"];
       }
     }
@@ -648,6 +662,14 @@ If(Flag_AnalysisType == 3 )
 
     T0[] = 20;
     
+    If(defect == 1)
+      k[Air] = 0.02;
+    EndIf
+
+
+    NL_tol_abs = 1e-12;
+    NL_tol_rel = 1e-6;
+    NL_iter_max = 20;
   }
 
     
@@ -656,7 +678,12 @@ Constraint {
     // 1) Dirichlet boundary condition
     { Name T_init; Type Init;
       Case {
-        { Region Domain_tot ; Type Assign; Value T0[] ; }
+        { Region Conductor ; Value T0[] ; }
+      }
+    }
+    { Name T_dirichlet ;
+      Case {
+        { Region outer_boundary ; Type Assign; Value 20 ; }
       }
     }
      
@@ -665,11 +692,12 @@ Constraint {
   FunctionSpace {
       { Name Hgrad_T; Type Form0;
         BasisFunction {
-          { Name sn; NameOfCoef Tn; Function BF_Node; Support Domain_Ele; Entity NodesOf[All]; }
+          { Name sn; NameOfCoef Tn; Function BF_Node; Support Domain_tot; Entity NodesOf[All]; }
         }
         
         Constraint {
           { NameOfCoef Tn; EntityType NodesOf ; NameOfConstraint T_init; }
+          { NameOfCoef Tn; EntityType NodesOf ; NameOfConstraint T_dirichlet; }
 
         }   
       }
@@ -713,14 +741,15 @@ Constraint {
         Quantity {
           { Name T;  Type Local; NameOfSpace Hgrad_T; }
           { Name a; Type Local; NameOfSpace Hcurl_a_Mag_2D; }
+          { Name ir; Type Local; NameOfSpace Hregion_i_2D; }
           
         }
         Equation {
           Galerkin { [ k[] * Dof{d T} , {d T} ];
                     In Domain_tot; Integration I1; Jacobian Vol;  }
 
-          Galerkin { [ -0.5*sigma[<T>[{T}]]* Norm[Dt[{a}]* Dt[{a}]], {T} ];
-                  In DomainC_Mag; Integration I1; Jacobian Vol;  }
+          Galerkin { [ -0.5*sigma[<T>[{T}]]* <a>[SquNorm[Dt[{a}]]] -  0.5*<ir>[SquNorm[{ir}*Ns[]/Sc[]]]/sigma[<T>[{T}]], {T} ];
+                  In Domain_tot; Integration I1; Jacobian Vol;  }
 
           
 
@@ -730,9 +759,7 @@ Constraint {
 
     
 
-    Function {
-      NL_Eps = 1.e-8; NL_Relax = 1.; NL_NbrMax = 80;
-    }
+    
 
     Resolution {
       { Name MagnetoThermalCoupling;
@@ -742,13 +769,40 @@ Constraint {
           { Name Sys_The; NameOfFormulation The_T_non_lin; }
         }
         Operation {
-          InitSolution[Sys_Mag]; InitSolution[Sys_The];
-          IterativeLoop[NL_NbrMax, NL_Eps, NL_Relax] {
-            GenerateJac[Sys_Mag]; SolveJac[Sys_Mag];
-            GenerateJac[Sys_The]; SolveJac[Sys_The];
+        // Initialize the temperature to the initial condition "T0[]":
+        InitSolution[Sys_The];
+
+        // First solve: magnetic with the initial temperature, then thermal:
+        Generate[Sys_Mag]; Solve[Sys_Mag];
+        Generate[Sys_The]; Solve[Sys_The];
+
+        
+          // Re-generate the magnetic system with the updated temperature (which
+          // changes sigma), and compute the initial residual:
+          Generate[Sys_Mag];
+          GetResidual[Sys_Mag, $res0];
+
+          // Initialize runtime variables to track the residual and the iteration
+          // count, then print out the absolute and relative residual:
+          Evaluate[ $res = $res0, $iter = 0 ];
+          Print[{$iter, $res, $res / $res0},
+            Format "Residual %03g: abs %14.12e rel %14.12e"];
+
+          // Iterate until convergence (same loop structure as in tutorial 3):
+          While[$res > NL_tol_abs && $res / $res0 > NL_tol_rel &&
+            $res / $res0 <= 1 && $iter < NL_iter_max]{
+            Solve[Sys_Mag];
+            Generate[Sys_The]; Solve[Sys_The];
+            Generate[Sys_Mag]; GetResidual[Sys_Mag, $res];
+            Evaluate[ $iter = $iter + 1 ];
+            Print[{$iter, $res, $res / $res0},
+              Format "Residual %03g: abs %14.12e rel %14.12e"];
           }
-          SaveSolution[Sys_Mag]; SaveSolution[Sys_The];
-        }
+        
+
+      SaveSolution[Sys_Mag];
+      SaveSolution[Sys_The];
+    }
       }
     }
 
@@ -785,6 +839,7 @@ Constraint {
               Integral { [ 0.5/sigma[ <T>[{T}] ]*SquNorm[Ns[]/Sc[]*{ir}] ] ; In DomainS_Mag  ; Jacobian Vol ; Integration I1 ; }
             }
           }
+          {Name sigma; Value{ Local{ [ sigma[<T>[{T}]] ] ; In Conductor; Jacobian Vol; } } }
       }
     }
 
@@ -792,8 +847,8 @@ Constraint {
   PostOperation {
       { Name Post_MagTher_non_lin ; NameOfPostProcessing The_non_lin ;
         Operation {
-          Print[ T, OnElementsOf Domain_Mag , File "map_T.pos"];
-          Print[ q, OnElementsOf Domain_Mag , File "map_Q.pos"];
+          Print[ T, OnElementsOf Domain_Mag , File "res/map_T.pos"];
+          Print[ q, OnElementsOf Domain_Mag , File "res/map_Q.pos"];
           //Print[ qVol, OnElementsOf Domain_tot , File "map_QVol.pos"];
           Print[ jz , OnElementsOf Region[{DomainC_Mag}],
               Name "jz [A/m^2]", File "res/jz_inds.pos" ];
@@ -808,6 +863,7 @@ Constraint {
             Print[ global_losses[DomainS_Mag], OnGlobal, Format Table,
               SendToServer "{01Global MAG results/0Losses source non lin ",
               Units "W/m", File > "res/losses_inds_non_lin.dat" ];
+              Print[ sigma, OnElementsOf Conductor , File "res/map_Sigma.pos" ];
         }
       }
     }

@@ -20,7 +20,8 @@ DefineConstant[ defect = {0, Highlight "Red", Choices{0=" 0 : no defect",
 
 
 DefineConstant[ defect_size = {0.5*mm, Highlight "Red", Name "Input/1Geometry/Size of the defect in the insulant layer", Visible (defect == 1)}, 
-                defect_place = { 45, Highlight "Red", Name "Input/1Geometry/Place of the defect in the insulant layer (angle in degree)", Visible (defect == 1)}];
+                defect_place = { 45, Highlight "Red", Name "Input/1Geometry/Place of the defect in the insulant layer (angle in degree)", Visible (defect == 1)},
+                defect_depth = { 2*mm, Highlight "Red", Name "Input/1Geometry/Depth of the defect in the insulant layer (angle in degree)", Visible (defect == 1)}];
 
 
 DefineConstant[ t_cond = {4*mm, Name "Input/1Geometry/wires/Thickness of the central conductor"}];
@@ -47,5 +48,5 @@ DefineConstant[ t_binder = {1.9*mm, Name "Input/1Geometry/cable/(armour) Thickne
   
 EndIf
 
-
+DefineConstant[dinf = {5*R_Tot, Name "Input/1Geometry/cable/Outside boundary"}];
 
